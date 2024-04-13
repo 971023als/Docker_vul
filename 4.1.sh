@@ -1,73 +1,47 @@
 #!/bin/bash
 
+# 변수 초기화
 {
-  "분류": "운영 관리",
+  "분류": "Docker Swarm",
   "코드": "4.1",
-  "위험도": "중요도 중",
-  "진단_항목": "EBS 및 볼륨 암호화 설정",
+  "위험도": "중요도 상",
+  "진단_항목": "인증 제어",
   "대응방안": {
-    "설명": "EBS는 EC2 인스턴스 생성 및 이용 시 사용되는 블록 형태의 스토리지 볼륨이며, AES-256 알고리즘을 사용하여 볼륨 암호화를 지원합니다. 이는 데이터 및 애플리케이션에 대한 보안을 강화하여 안전하게 정보를 저장할 수 있게 해줍니다.",
+    "설명": "Docker Swarm 모드에서는 manager node와 worker node가 있으며, 인증 관리를 통해 컨테이너 및 클러스터의 보안을 강화합니다. 잘못된 인증 설정이 시스템에 큰 영향을 줄 수 있으므로 엄격한 인증 절차와 설정이 필요합니다.",
     "설정방법": [
-      "인스턴스 시작 클릭",
-      "AMI 선택",
-      "인스턴스 유형 선택",
-      "인스턴스 구성",
-      "스토리지 추가",
-      "태그 추가",
-      "보안 그룹 구성",
-      "스토리지 암호화 여부 확인",
-      "EC2 인스턴스 클릭 및 스토리지 클릭",
-      "스토리지 암호화 설정여부 확인",
-      "Elastic Block Store 메뉴 내 볼륨 기능 선택",
-      "볼륨 생성 메뉴 내 '암호화' 활성화 후 KMS 키 값을 추가하여 설정"
+      "Swarm mode 활성화를 불필요하게 하지 않음",
+      "관리자 노드의 수를 최소화",
+      "자동 잠금 모드를 사용하여 시스템 보안을 강화",
+      "Swarm 초기화 시 자동 잠금 모드를 활성화하고, 필요에 따라 잠금키를 주기적으로 변경"
     ]
   },
   "현황": [],
-  "진단_결과": "양호"
+  "진단_결과": ""
 }
 
 
-# Check for aws CLI tools
-if ! command -v aws &> /dev/null; then
-    echo "AWS CLI is not installed. Please install AWS CLI to run this script."
-    exit 1
-fi
+# Docker Swarm 인증 제어 진단
+echo "Docker Swarm 인증 제어 진단을 시작합니다..."
 
-# List all EBS volumes with their encryption status
-echo "Retrieving EBS volumes and encryption status..."
-ebs_volumes_output=$(aws ec2 describe-volumes --query 'Volumes[*].{VolumeId:VolumeId, Encrypted:Encrypted}' --output json)
-if [ $? -ne 0 ]; then
-    echo "Failed to retrieve EBS volumes. Please check your AWS CLI setup and permissions."
-    exit 1
-fi
+# Swarm mode 활성화 여부 확인
+echo "Swarm mode 활성화 여부:"
+docker info | grep "Swarm: active"
 
-if [ -z "$ebs_volumes_output" ]; then
-    echo "No EBS volumes found."
-    exit 0
-fi
+# 관리자 노드 수 확인
+echo "관리자 노드 수:"
+docker node ls | grep "Leader" | wc -l
 
-echo "EBS Volumes found:"
-echo "$ebs_volumes_output"
+# 자동 잠금 모드 사용 여부 확인
+echo "자동 잠금 모드 사용 여부:"
+docker swarm unlock-key
 
-# Analyze the encryption status for compliance
-compliance_status="양호"  # Assume all volumes must be encrypted for a '양호' status
-echo "Analyzing encryption status of EBS volumes..."
-for row in $(echo "${ebs_volumes_output}" | jq -r '.[] | @base64'); do
-    _jq() {
-     echo ${row} | base64 --decode | jq -r ${1}
-    }
-    volume_id=$(_jq '.VolumeId')
-    encrypted=$(_jq '.Encrypted')
-    if [ "$encrypted" == "false" ]; then
-        echo "Volume $volume_id is not encrypted."
-        compliance_status="취약"
-        break
-    fi
-done
-
-echo "Encryption compliance status: $compliance_status"
-
-# Update JSON diagnostic result directly using jq and sponge
-echo "Updating diagnosis result..."
-jq --arg status "$compliance_status" '.진단_결과 = $status' diagnosis.json | sponge diagnosis.json
-echo "Diagnosis updated with result: $compliance_status"
+# 결과 JSON 출력
+echo "{
+  \"분류\": \"$분류\",
+  \"코드\": \"$코드\",
+  \"위험도\": \"$위험도\",
+  \"진단_항목\": \"$진단_항목\",
+  \"대응방안\": \"$대응방안\",
+  \"현황\": $현황,
+  \"진단_결과\": \"$진단_결과\"
+}"
