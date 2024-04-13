@@ -1,48 +1,46 @@
 #!/bin/bash
 
-# Initialize variables simulating JSON data structure
-declare -A diagnostic_data=(
-    [분류]="가상 리소스 관리"
-    [코드]="3.3"
-    [위험도]="중요도 중"
-    [진단_항목]="네트워크 ACL 인/아웃바운드 트래픽 정책 관리"
-    [대응방안]="네트워크 ACL은 서브넷 내부와 외부의 트래픽을 제어하는 VPC의 선택적 보안 계층입니다. 이를 적절히 설정하면 VPC 내 리소스 보호를 강화할 수 있습니다."
-    [설정방법]="AWS 콘솔 또는 CLI를 통해 네트워크 ACL 설정 접근, 규칙 추가 및 수정을 관리할 수 있습니다."
-    [현황]="[]"
-    [진단_결과]="진단 필요"
-)
+# 변수 초기화
+{
+  "분류": "이미지",
+  "코드": "3.3",
+  "위험도": "중요도 중",
+  "진단_항목": "레지스트리 운영 관리",
+  "대응방안": {
+    "설명": "레지스트리는 이미지를 저장하고 식별, 버전 관리하여 개발자가 쉽게 사용할 수 있도록 도와주는 서비스입니다. 보안적으로 중요한 정보가 포함된 이미지가 레지스트리에 저장되므로 이를 적절히 보호해야 합니다.",
+    "설정방법": [
+      "레지스트리와의 통신에 SSL/TLS 프로토콜 적용하여 보안 강화",
+      "레지스트리 내 인증 및 권한 부여를 통해 이미지 접근 제어",
+      "레지스트리에 저장된 이미지 관리하여 취약점 및 오래된 버전 제거",
+      "Content trust를 사용하여 원격 레지스트리와의 데이터 교환에 무결성을 보장"
+    ]
+  },
+  "현황": [],
+  "진단_결과": ""
+}
 
-echo "Fetching Network ACLs and their rules..."
+# 레지스트리 운영 관리 진단
+echo "레지스트리 운영 관리를 진단합니다..."
 
-# Retrieve all Network ACLs
-netacls_output=$(aws ec2 describe-network-acls --query 'NetworkAcls[*].[NetworkAclId, Entries]' --output text)
-echo "Available Network ACLs:"
-echo "$netacls_output"
+# Content trust 활성화 여부 확인
+echo "Content trust 활성화 여부:"
+echo "$DOCKER_CONTENT_TRUST"
 
-# User prompt to select a specific Network ACL
-read -p "Enter Network ACL ID to check rules: " acl_id
+# 레지스트리와 암호화 연결 설정 확인
+echo "레지스트리 암호화 연결 설정:"
+ps -ef | grep dockerd
 
-# Display the selected Network ACL's rules
-echo "Network ACL Rules:"
-aws ec2 describe-network-acls --network-acl-id "$acl_id" --query 'NetworkAcls[*].Entries' --output json
+# 구버전(v1) legacy registry 사용 금지 여부 확인
+echo "구 버전 레지스트리 비활성화 설정:"
+dockerd --disable-legacy-registry
 
-# Assessing the Network ACL rules based on user checks
-echo "Review the rules displayed above."
-read -p "Are there unnecessary allow policies in inbound rules? (yes/no): " inbound_check
-read -p "Are there unnecessary allow policies in outbound rules? (yes/no): " outbound_check
-
-if [ "$inbound_check" = "yes" ] || [ "$outbound_check" = "yes" ]; then
-    echo "At least one unnecessary rule is found. Recommend revising the ACL settings."
-    diagnostic_data[진단_결과]="취약"
-else
-    echo "No unnecessary rules found. ACL settings are appropriate."
-    diagnostic_data[진단_결과]="양호"
-fi
-
-# Output final assessment
-echo "진단 결과: ${diagnostic_data[진단_결과]}"
-
-# Output all diagnostic data
-for key in "${!diagnostic_data[@]}"; do
-    echo "$key: ${diagnostic_data[$key]}"
-done
+# 결과 JSON 출력
+echo "{
+  \"분류\": \"$분류\",
+  \"코드\": \"$코드\",
+  \"위험도\": \"$위험도\",
+  \"진단_항목\": \"$진단_항목\",
+  \"대응방안\": \"$대응방안\",
+  \"현황\": $현황,
+  \"진단_결과\": \"$진단_결과\"
+}"

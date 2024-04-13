@@ -1,47 +1,52 @@
 #!/bin/bash
 
 # 변수 초기화
-분류="가상 리소스 관리"
-코드="3.1"
-위험도="중요도 상"
-진단_항목="보안 그룹 인/아웃바운드 ANY 설정 관리"
-대응방안="VPC 내 보안 그룹을 통한 인/아웃바운드 트래픽을 적절하게 제어해야 합니다. 인스턴스에 할당된 보안 그룹을 검토하여 모든 포트에 대한 넓은 범위의 허용이 설정되어 있지 않도록 관리해야 합니다."
-설정방법="AWS Management Console 또는 AWS CLI를 사용하여 보안 그룹의 인/아웃바운드 규칙을 검토하고 수정합니다."
-현황=()
-진단_결과=""
+{
+  "분류": "이미지",
+  "코드": "3.1",
+  "위험도": "중요도 중",
+  "진단_항목": "Dockerfile Config",
+  "대응방안": {
+    "설명": "Dockerfile 설정은 컨테이너 이미지 구성 시 중요한 보안 측면을 포함합니다. 적절한 사용자 권한 설정, 불필요한 권한 제거, 기밀 정보 관리 등을 통해 보안을 강화해야 합니다. Dockerfile 내에서 사용되는 명령들은 컨테이너의 보안성 및 효율성에 직접적인 영향을 미칩니다.",
+    "설정방법": [
+      "FROM 명령을 사용하여 적절한 베이스 이미지 선택",
+      "RUN 명령으로 필요한 패키지만 설치하여 이미지 크기 최소화",
+      "EXPOSE 명령으로 필요한 포트만 열기",
+      "ENV로 중요 환경변수 설정",
+      "CMD 또는 ENTRYPOINT를 사용하여 컨테이너 실행 시 초기화 명령 설정",
+      "USER 명령으로 non-root 사용자로 실행",
+      "COPY 대신 ADD 사용을 피하고, 필요한 파일만 컨테이너로 복사",
+      "LABEL로 이미지에 메타데이터 추가",
+      "ARG로 빌드 시 필요한 변수 설정",
+      "Dockerfile을 통한 업데이트 명령어 금지"
+    ]
+  },
+  "현황": [],
+  "진단_결과": ""
+}
 
-echo "Checking Security Group settings for any wide open ports..."
 
-# 보안 그룹 설정 검토
-security_groups=$(aws ec2 describe-security-groups --query 'SecurityGroups[*].[GroupId,GroupName]' --output text)
+# Docker 이미지와 Dockerfile 검사
+echo "Docker 이미지 및 Dockerfile 설정을 검사합니다..."
 
-echo "Available Security Groups:"
-echo "$security_groups"
+# Dockerfile 명령 사용 확인
+echo "Dockerfile 내 설정된 명령어들을 검사합니다..."
+docker images --format '{{.Repository}}:{{.Tag}}' | while read image; do
+    echo "검사 중: $image"
+    docker history "$image" | grep -E 'ADD|RUN|USER'
+done
 
-# User prompt to select a specific Security Group
-read -p "Enter Security Group ID to check: " sg_id
+# 사용자 지정 및 secrets 존재 여부 검사
+echo "Dockerfile 내 사용자 설정 및 secrets 존재 여부를 검사합니다..."
+docker images --quiet | xargs -I {} docker inspect --format '{{ .Id }}: User={{ .Config.User }}' {}
 
-# Check inbound and outbound rules for 'ANY' settings (0.0.0.0/0 or ::/0)
-inbound_any=$(aws ec2 describe-security-groups --group-ids "$sg_id" --query 'SecurityGroups[*].IpPermissions[?IpRanges[?CidrIp==`0.0.0.0/0`] || Ipv6Ranges[?CidrIpv6==`::/0`]].FromPort' --output text)
-outbound_any=$(aws ec2 describe-security-groups --group-ids "$sg_id" --query 'SecurityGroups[*].IpPermissionsEgress[?IpRanges[?CidrIp==`0.0.0.0/0`] || Ipv6Ranges[?CidrIpv6==`::/0`]].FromPort' --output text)
-
-# Result processing and diagnosis
-if [ -n "$inbound_any" ] || [ -n "$outbound_any" ]; then
-    echo "Security Group '$sg_id' has open 'ANY' settings on these ports:"
-    echo "Inbound Open Ports: $inbound_any"
-    echo "Outbound Open Ports: $outbound_any"
-    진단_결과="취약"
-else
-    echo "Security Group '$sg_id' does not have any wide open 'ANY' settings."
-    진단_결과="양호"
-fi
-
-# 결과 출력
-echo "분류: $분류"
-echo "코드: $코드"
-echo "위험도: $위험도"
-echo "진단_항목: $진단_항목"
-echo "대응방안: $대응방안"
-echo "설정방법: $설정방법"
-echo "현황: ${현황[@]}"
-echo "진단_결과: $진단_결과"
+# 결과 JSON 출력
+echo "{
+  \"분류\": \"$분류\",
+  \"코드\": \"$코드\",
+  \"위험도\": \"$위험도\",
+  \"진단_항목\": \"$진단_항목\",
+  \"대응방안\": \"$대응방안\",
+  \"현황\": $현황,
+  \"진단_결과\": \"$진단_결과\"
+}"
