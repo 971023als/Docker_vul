@@ -1,39 +1,39 @@
 #!/bin/bash
 
-# 디렉터리 설정
-output_dir="./aws_audit_results"
-mkdir -p $output_dir
+# Variables initialization
+분류="Docker Configuration"
+코드="1.1"
+위험도="중요도 상"
+진단_항목="호스트 OS 주요 자원 접근 제어"
+대응방안="{
+  \"설명\": \"컨테이너에서 호스트 OS의 주요 자원에 접근하는 것을 제한하여 호스트 및 다른 컨테이너의 안정성과 보안을 보장합니다. 주요 시스템 디렉터리 마운트와 호스트 장치 파일의 직접 노출을 금지합니다.\",
+  \"설정방법\": [
+    \"주요 시스템 디렉터리 마운트 금지: 컨테이너 생성 시 호스트의 중요 시스템 디렉터리를 마운트 하지 않도록 설정합니다.\",
+    \"호스트 장치 파일 컨테이너에 직접 노출 금지: 컨테이너에 필요한 호스트 장치 파일만 노출하고, 적절한 권한 설정을 통해 접근을 제어합니다.\"
+  ]
+}"
+현황=()
+진단_결과=""
 
-# IAM 사용자, 그룹, 역할 리스트업
-echo "Saving list of IAM Users, Groups, and Roles..."
-aws iam list-users --output json > $output_dir/users.json
-aws iam list-groups --output json > $output_dir/groups.json
-aws iam list-roles --output json > $output_dir/roles.json
+# 진단 시작
+echo "진단 시작..."
+# Check mounted directories and permissions
+echo "검사: 호스트 OS 주요 시스템 디렉터리 마운트 금지"
+docker ps --quiet --all | xargs docker inspect --format '{{ .Id }}: Volumes={{ .Mounts }}'
 
-# 관리자 권한을 보유한 계정 확인
-echo "Checking for accounts with administrative permissions and saving..."
-aws iam list-users --query 'Users[?AttachedManagedPolicies[?PolicyName==`AdministratorAccess`]].UserName' --output json > $output_dir/admin_users.json
+echo "검사: 호스트 장치 파일 컨테이너에 직접 노출 금지"
+docker ps --quiet --all | xargs docker inspect --format '{{ .Id }}: Devices={{ .HostConfig.Devices }}'
 
-# 불필요한 계정 식별
-echo "Identifying unnecessary accounts (e.g., test accounts) and saving..."
-aws iam list-users --query 'Users[?contains(UserName, `test`) || contains(UserName, `temp`)].UserName' --output json > $output_dir/unnecessary_users.json
+# 임시 진단 결과 할당
+진단_결과="양호" # 또는 "취약"을 할당할 수 있습니다. 검사 후 결정
 
-# Access Key 유효기간 확인 및 저장
-echo "Checking for expired Access Keys and saving..."
-current_date=$(date +%s)
-echo "[]" > $output_dir/expired_access_keys.json  # 초기 JSON 배열 파일 생성
-
-aws iam list-users --query 'Users[*].UserName' --output text | while read user; do
-  aws iam list-access-keys --user-name "$user" --query 'AccessKeyMetadata[?Status==`Active`].[AccessKeyId,CreateDate]' --output json | jq -c '.[] | select(. != null)' | while read key_data; do
-    key_id=$(echo $key_data | jq -r '.[0]')
-    create_date=$(echo $key_data | jq -r '.[1]')
-    key_date=$(date -d "$create_date" +%s)
-    let age_days=($current_date-$key_date)/86400
-    if [ $age_days -gt 180 ]; then
-      echo "User $user has an active Access Key $key_id older than 180 days."
-      jq -c --arg user "$user" --arg key_id "$key_id" --arg age_days "$age_days" '. += [{"user": $user, "key_id": $key_id, "age_days": $age_days}]' $output_dir/expired_access_keys.json > $output_dir/temp.json && mv $output_dir/temp.json $output_dir/expired_access_keys.json
-    fi
-  done
-done
-
-echo "Audit complete. Results saved in $output_dir."
+# 결과 JSON 출력
+echo "{
+  \"분류\": \"$분류\",
+  \"코드\": \"$코드\",
+  \"위험도\": \"$위험도\",
+  \"진단_항목\": \"$진단_항목\",
+  \"대응방안\": $대응방안,
+  \"현황\": $현황,
+  \"진단_결과\": \"$진단_결과\"
+}"
