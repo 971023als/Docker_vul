@@ -1,7 +1,11 @@
-# AWS 취약점 진단 자동화 스크립트
+# Docker 취약점 진단 자동화 스크립트
 
-이 프로젝트는 2024 클라우드 보안가이드(AWS) 기반으로 취약점을 점검하고 평가하는 자동화 스크립트를 제공합니다. 목표는 서버의 보안 상태를 평가하여 취약한 부분을 식별하고, 보안 조치를 취할 수 있도록 하는 것입니다.
+이 프로젝트는 **2024 컨테이너 보안 가이드(Docker)** 기반으로 Docker 환경의 취약점을 점검하고 평가하기 위한 자동화 스크립트를 제공합니다. 목표는 Docker 컨테이너와 호스트 환경의 보안 상태를 평가하여 취약한 부분을 식별하고, 개선 조치를 제안하는 것입니다.
 
+---
+
+## 결과 형식
+점검 결과는 JSON 형식으로 출력되며, 각 항목에 대한 상태와 설명이 포함됩니다.
 
 ```json
 {
@@ -11,38 +15,3 @@
   },
   ...
 }
-```
-
-
-```python
-cd root
-```
-
-```python
-sudo yum install git -y
-```
-
-```python
-sudo apt-get install git -y
-```
-
-
-```python
-sudo git clone https://github.com/971023als/linux_vul
-```
-
-```python
-cd linux_vul/Python_json/ubuntu/
-```
-
-cd linux_vul/change/
-```
-
-```python
-chmod +x vul.sh
-```
-
-
-```python
-./vul.sh
-```
