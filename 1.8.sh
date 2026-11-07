@@ -1,6 +1,9 @@
 #!/bin/bash
-
-# 변수 초기화
+set -eu
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/common.sh"
+# Original item metadata; collection does not assign a security verdict.
+META_JSON=$(cat <<'JSON'
 {
   "분류": "Docker Configuration",
   "코드": "1.8",
@@ -18,37 +21,6 @@
   "현황": [],
   "진단_결과": ""
 }
-
-
-# 컨테이너 보안 정책 진단 시작
-echo "컨테이너 보안 정책 진단을 시작합니다..."
-
-# AppArmor 프로필 적용 검사
-echo "AppArmor 프로필 적용 검사:"
-docker ps --quiet --all | xargs docker inspect --format '{{ .Id }}: AppArmorProfile={{ .AppArmorProfile }}'
-
-# SELinux 사용 검사
-echo "SELinux 사용 검사:"
-docker ps --quiet --all | xargs docker inspect --format '{{ .Id }}: SecurityOpt={{ .HostConfig.SecurityOpt }}'
-
-# seccomp 프로필 적용 검사
-echo "seccomp 프로필 적용 검사:"
-docker ps --quiet --all | xargs docker inspect --format '{{ .Id }}: SecurityOpt={{ .HostConfig.SecurityOpt }}'
-
-# 리눅스 커널 Capabilities 설정 검사
-echo "리눅스 커널 Capabilities 설정 검사:"
-docker ps --quiet --all | xargs docker inspect --format '{{ .Id }}: CapAdd={{ .HostConfig.CapAdd }} CapDrop={{ .HostConfig.CapDrop }}'
-
-# 진단 결과 업데이트
-진단_결과="양호"  # 실제 진단 결과에 따라 "양호" 또는 "취약"으로 업데이트할 수 있습니다.
-
-# 결과 JSON 출력
-echo "{
-  \"분류\": \"$분류\",
-  \"코드\": \"$코드\",
-  \"위험도\": \"$위험도\",
-  \"진단_항목\": \"$진단_항목\",
-  \"대응방안\": \"$대응방안\",
-  \"현황\": $현황,
-  \"진단_결과\": \"$진단_결과\"
-}"
+JSON
+)
+collect_evidence '1.8'
