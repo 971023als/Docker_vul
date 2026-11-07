@@ -1,6 +1,9 @@
 #!/bin/bash
-
-# 변수 초기화
+set -eu
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/common.sh"
+# Original item metadata; collection does not assign a security verdict.
+META_JSON=$(cat <<'JSON'
 {
   "분류": "Docker Swarm",
   "코드": "4.3",
@@ -18,26 +21,6 @@
   "현황": [],
   "진단_결과": ""
 }
-
-
-# 네트워크 설정 진단
-echo "네트워크 설정 진단을 시작합니다..."
-
-# 네트워크 인터페이스 설정 확인
-echo "네트워크 인터페이스 설정:"
-netstat -lt | grep -i 2377
-
-# Docker Swarm 네트워크 인터페이스 설정 확인
-echo "Docker Swarm 네트워크 인터페이스 설정을 확인합니다..."
-docker swarm init --listen-addr example IP
-
-# 결과 JSON 출력
-echo "{
-  \"분류\": \"$분류\",
-  \"코드\": \"$코드\",
-  \"위험도\": \"$위험도\",
-  \"진단_항목\": \"$진단_항목\",
-  \"대응방안\": \"$대응방안\",
-  \"현황\": $현황,
-  \"진단_결과\": \"$진단_결과\"
-}"
+JSON
+)
+collect_evidence '4.3'
