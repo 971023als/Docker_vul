@@ -34,7 +34,14 @@
 
 ### 1. 스크립트 실행
 ```bash
-bash docker_configuration_diagnostic.sh
+# 점검과 결과 변환만 실행 (기본, 결과는 ./output에 생성)
+bash vul.sh
+
+# 최초 1회 환경 설정 (패키지 설치, cron 등록, Apache 인코딩 설정)
+sudo bash vul.sh --setup
+
+# 결과를 웹으로 서빙하려면 (Apache 필요, /var/www/html에 생성)
+sudo bash vul.sh --web
 ```
 
 ### 2. 실행 결과
@@ -144,4 +151,3 @@ bash docker_configuration_diagnostic.sh
 
 ## 기여
 - 개선점이나 버그는 Pull Request 또는 Issue를 통해 알려주세요.
-

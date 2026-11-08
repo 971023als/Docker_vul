@@ -1,6 +1,9 @@
 #!/bin/bash
 
 # 초기 설정
+umask 077
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 declare -A OS_PACKAGE_MANAGER=(
     [debian]="apt-get"
     [ubuntu]="apt-get"
@@ -14,12 +17,17 @@ declare -A OS_PACKAGES=(
     [ubuntu]="apache2 libapache2-mod-wsgi-py3 python3-venv"
     [centos]="httpd mod_wsgi python3"
     [rhel]="httpd mod_wsgi python3"
-    [fedora]="httpd mod_wsgi python3-virtualenv" # 여기를 수정했습니다
+    [fedora]="httpd mod_wsgi python3-virtualenv"
 )
 
-CRON_JOB="/usr/bin/python3 /root/linux_vuln/Python_json/centos/vul.sh"
-NOW=$(date +'%Y-%m-%d_%H-%M-%S')
-WEB_DIRECTORY="/var/www/html"
+# cron은 이 스크립트 자체를 bash로 실행해야 하며, 설치 없이 점검/변환만 수행한다.
+printf -v CRON_JOB '/bin/bash %q --cron' "$SCRIPT_DIR/vul.sh"
+# crontab treats percent signs specially, including inside shell quotes.
+CRON_JOB=${CRON_JOB//%/\\%}
+NOW=$(date +'%Y-%m-%d_%H-%M-%S')_$$
+# 기본 출력은 저장소 로컬 ./output. --web 또는 WEB_DIRECTORY 지정 시에만 웹 서빙 경로 사용.
+WEB_MODE=false
+WEB_DIRECTORY="${WEB_DIRECTORY:-$SCRIPT_DIR/output}"
 RESULTS_PATH="$WEB_DIRECTORY/results_${NOW}.json"
 ERRORS_PATH="$WEB_DIRECTORY/errors_${NOW}.log"
 CSV_PATH="$WEB_DIRECTORY/results_${NOW}.csv"
@@ -40,7 +48,9 @@ setup_environment() {
         exit 1
     fi
 
-    [ "$ID" == "centos" ] || [ "$ID" == "rhel" ] && [ "${VERSION_ID%%.*}" -ge 8 ] && PKG_MANAGER="dnf"
+    if { [ "$ID" = centos ] || [ "$ID" = rhel ]; } && [ "${VERSION_ID%%.*}" -ge 8 ]; then
+        PKG_MANAGER=dnf
+    fi
 
     install_packages
 }
@@ -89,7 +99,7 @@ setup_cron_job() {
 setup_apache_encoding() {
     echo "Apache 인코딩 설정 시작..."
     local apache_config
-    
+
     # 운영체제별 Apache 설정 파일 경로 지정
     echo "현재 운영 체제: $ID"
     if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]]; then
@@ -122,106 +132,166 @@ setup_apache_encoding() {
 
 
 # 보안 점검 스크립트 실행 및 결과 처리
+# 저장소의 실제 점검 스크립트(<번호>.<번호>.sh)를 bash로 실행한다.
 execute_security_checks() {
-    echo "[" > "$RESULTS_PATH"
-    declare -a errors
-    first_entry=true
+    mkdir -p "$WEB_DIRECTORY" || return 1
+    local tmpdir
+    tmpdir=$(mktemp -d) || return 1
+    local count=0
+    : > "$ERRORS_PATH"
 
-    for i in $(seq -f "%02g" 1 72); do
-        SCRIPT_PATH="U-$i.sh"
-        if [ -f "$SCRIPT_PATH" ]; then
-            RESULT=$(python3 "$SCRIPT_PATH" 2>>"$ERRORS_PATH")
-            if [ $? -eq 0 ]; then
-                [ "$first_entry" = false ] && echo "," >> "$RESULTS_PATH"
-                first_entry=false
-                echo "$RESULT" >> "$RESULTS_PATH"
-            else
-                errors+=("Error running $SCRIPT_PATH")
-            fi
+    for script in "$SCRIPT_DIR"/[0-9]*.[0-9]*.sh; do
+        [ -f "$script" ] || continue
+        local name out errf rc
+        name=$(basename "$script")
+        out="$tmpdir/$name.out"
+        errf="$tmpdir/$name.err"
+        timeout 120 bash "$script" >"$out" 2>"$errf" && rc=0 || rc=$?
+
+        if [ "$rc" -eq 0 ] && python3 -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as f:
+    obj = json.load(f)
+assert isinstance(obj, dict) and "진단_결과" in obj
+' "$out" 2>/dev/null; then
+            :
         else
-            errors+=("$SCRIPT_PATH not found")
+            echo "[$name] 실행 실패(exit=$rc) 또는 유효하지 않은 JSON 출력:" >> "$ERRORS_PATH"
+            head -c 2000 "$errf" >> "$ERRORS_PATH"
+            echo "--- stdout ---" >> "$ERRORS_PATH"
+            head -c 2000 "$out" >> "$ERRORS_PATH"
+            # 실패한 항목도 보고서에 '오류'로 기록해 점검 누락이 보이게 한다
+            python3 - "$name" > "$out.fixed" <<'EOF'
+import json, sys
+name = sys.argv[1]
+code = name[:-3] if name.endswith('.sh') else name
+obj = {
+    "분류": "점검 오류",
+    "코드": code,
+    "위험도": "",
+    "진단_항목": name,
+    "대응방안": {"설명": "", "설정방법": []},
+    "현황": ["스크립트 실행에 실패했거나 올바른 JSON을 출력하지 않았습니다. errors 로그를 확인하세요."],
+    "진단_결과": "오류",
+}
+print(json.dumps(obj, ensure_ascii=False))
+EOF
+            mv "$out.fixed" "$out"
         fi
+        mv "$out" "$(printf '%s/entry_%03d.json' "$tmpdir" "$count")"
+        count=$((count + 1))
     done
-    echo "]" >> "$RESULTS_PATH"
 
-    if [ ${#errors[@]} -gt 0 ]; then
-        printf "%s\n" "${errors[@]}" >> "$ERRORS_PATH"
+    if [ "$count" -eq 0 ]; then
+        echo "실행할 점검 스크립트가 없습니다 ($SCRIPT_DIR)." | tee -a "$ERRORS_PATH"
+    fi
+
+    python3 - "$tmpdir" "$RESULTS_PATH" <<'EOF'
+import glob, json, os, sys
+tmpdir, results_path = sys.argv[1], sys.argv[2]
+items = []
+for path in sorted(glob.glob(os.path.join(tmpdir, 'entry_*.json'))):
+    with open(path, encoding='utf-8') as f:
+        items.append(json.load(f))
+with open(results_path, 'w', encoding='utf-8') as f:
+    json.dump(items, f, ensure_ascii=False, indent=2)
+ok = sum(1 for i in items if i.get('진단_결과') != '오류')
+print(f"총 {len(items)}개 항목 기록 ({ok}개 유효 JSON, {len(items) - ok}개 실행/출력 오류) -> {results_path}")
+EOF
+
+    rm -rf "$tmpdir"
+
+    if [ -s "$ERRORS_PATH" ]; then
         echo "에러가 존재함 -> $ERRORS_PATH"
     else
+        rm -f "$ERRORS_PATH"
         echo "에러 없음."
     fi
+    [ "$count" -gt 0 ]
 }
 
 convert_results() {
-    python3 -c "
-import json
+    python3 - "$RESULTS_PATH" "$CSV_PATH" "$HTML_PATH" <<'EOF'
 import csv
-from pathlib import Path
+import html
+import json
+import sys
 
-json_path = Path('$RESULTS_PATH')
-csv_path = Path('$CSV_PATH')
-html_path = Path('$HTML_PATH')
+results_path, csv_path, html_path = sys.argv[1], sys.argv[2], sys.argv[3]
 
-def json_to_csv():
-    with json_path.open('r', encoding='utf-8') as json_file, csv_path.open('w', newline='', encoding='utf-8-sig') as csv_file:
-        data = json.load(json_file)
-        if data:
-            writer = csv.DictWriter(csv_file, fieldnames=data[0].keys())
-            writer.writeheader()
-            writer.writerows(data)
+try:
+    with open(results_path, encoding='utf-8') as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError('결과가 배열 형식이 아닙니다')
+    parse_error = None
+except Exception as e:
+    data = []
+    parse_error = str(e)
 
-def json_to_html():
-    with json_path.open('r', encoding='utf-8') as json_file, html_path.open('w', encoding='utf-8') as html_file:
-        data = json.load(json_file)
-        html_file.write('''
-<!DOCTYPE html>
+# CSV: 결과가 없어도 헤더는 항상 기록한다
+fieldnames = ['분류', '코드', '위험도', '진단_항목', '대응방안', '현황', '진단_결과']
+with open(csv_path, 'w', newline='', encoding='utf-8-sig') as csv_file:
+    writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+    writer.writeheader()
+    for item in data:
+        row = {k: item.get(k, '') for k in fieldnames}
+        remed = item.get('대응방안') or {}
+        if isinstance(remed, dict):
+            methods = remed.get('설정방법') or []
+            row['대응방안'] = remed.get('설명', '') + ' | ' + '; '.join(map(str, methods))
+        status = item.get('현황') or []
+        row['현황'] = '; '.join(map(str, status)) if isinstance(status, list) else str(status)
+        writer.writerow(row)
+
+# HTML
+rows = ''
+for item in data:
+    cells = ''.join(
+        '<td>{}</td>'.format(html.escape(str(item.get(k, ''))))
+        for k in ('분류', '코드', '위험도', '진단_항목', '진단_결과')
+    )
+    status = item.get('현황') or []
+    status_text = '; '.join(map(str, status)) if isinstance(status, list) else str(status)
+    rows += '<tr>{}<td>{}</td></tr>'.format(cells, html.escape(status_text))
+
+banner = ''
+if parse_error:
+    banner = '<p style="color:red">결과 JSON 파싱 실패: {}</p>'.format(html.escape(parse_error))
+elif not data:
+    banner = '<p style="color:red">점검 결과가 없습니다. 점검 스크립트 실행 여부와 errors 로그를 확인하세요.</p>'
+
+csv_name = csv_path.rsplit('/', 1)[-1]
+page = '''<!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
     <title>Security Check Results</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f4f4f4;
-        }
-        h1 {
-            color: #333;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        th, td {
-            text-align: left;
-            padding: 8px;
-            border: 1px solid #ddd;
-        }
-        th {
-            background-color: #4CAF50;
-            color: white;
-        }
-        tr:nth-child(even) {
-            background-color: #f2f2f2;
-        }
+        body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; }}
+        h1 {{ color: #333; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        th, td {{ text-align: left; padding: 8px; border: 1px solid #ddd; }}
+        th {{ background-color: #4CAF50; color: white; }}
+        tr:nth-child(even) {{ background-color: #f2f2f2; }}
     </style>
 </head>
 <body>
     <h1>Security Check Results</h1>
-    <a href=\"''' + csv_path.name + '''\">Download CSV</a><br>
-    <table>''')
-        if data:
-            headers = data[0].keys()
-            html_file.write('<tr>' + ''.join(f'<th>{h}</th>' for h in headers) + '</tr>')
-            for item in data:
-                row = '<tr>' + ''.join(f'<td>{item[h]}</td>' for h in headers) + '</tr>'
-                html_file.write(row)
-        html_file.write('</table></body></html>')
+    {banner}
+    <a href="{csv_name}">Download CSV</a><br>
+    <table>
+        <tr><th>분류</th><th>코드</th><th>위험도</th><th>진단_항목</th><th>진단_결과</th><th>현황</th></tr>
+        {rows}
+    </table>
+</body>
+</html>'''.format(banner=banner, csv_name=csv_name, rows=rows)
 
-json_to_csv()
-json_to_html()
-"
-    echo "결과가 CSV와 HTML 형식으로 변환되었습니다."
+with open(html_path, 'w', encoding='utf-8') as f:
+    f.write(page)
+
+print(f"결과 {len(data)}건을 CSV와 HTML로 변환했습니다.")
+EOF
 }
 
 
@@ -253,12 +323,48 @@ restart_apache() {
 
 # 메인 로직 실행
 main() {
-    setup_environment
-    setup_apache_encoding # 인코딩 설정 함수 호출
-    execute_security_checks 
-    convert_results  # 이 부분을 수정했습니다.
-    restart_apache
+    local mode="checks" explicit_mode=false
+    for arg in "$@"; do
+        case "$arg" in
+            --web) WEB_MODE=true
+                   [ "$WEB_DIRECTORY" = "$SCRIPT_DIR/output" ] && WEB_DIRECTORY="/var/www/html" ;;
+            --checks-only|--cron|--setup)
+                if [ "$explicit_mode" = true ]; then
+                    echo "Specify only one execution mode" >&2; return 2
+                fi
+                explicit_mode=true
+                case "$arg" in
+                    --checks-only) mode="checks" ;;
+                    --cron) mode="cron" ;;
+                    --setup) mode="setup" ;;
+                esac ;;
+            *) echo "Usage: $0 [--checks-only|--cron|--setup] [--web]" >&2
+               return 2 ;;
+        esac
+    done
+    RESULTS_PATH="$WEB_DIRECTORY/results_${NOW}.json"
+    ERRORS_PATH="$WEB_DIRECTORY/errors_${NOW}.log"
+    CSV_PATH="$WEB_DIRECTORY/results_${NOW}.csv"
+    HTML_PATH="$WEB_DIRECTORY/index.html"
+    case "$mode" in
+        checks)
+            local check_rc=0
+            execute_security_checks || check_rc=$?
+            convert_results || return $?
+            [ "$check_rc" -eq 0 ] || return "$check_rc"
+            ;;
+        cron)
+            local check_rc=0
+            execute_security_checks || check_rc=$?
+            convert_results || return $?
+            [ "$check_rc" -eq 0 ] || return "$check_rc"
+            if [ "$WEB_MODE" = true ]; then restart_apache; fi
+            ;;
+        setup)
+            setup_environment
+            setup_apache_encoding
+            ;;
+    esac
 }
 
-main
-
+main "$@"

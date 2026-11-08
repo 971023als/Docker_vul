@@ -1,6 +1,9 @@
 #!/bin/bash
-
-# 변수 초기화
+set -eu
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/common.sh"
+# Original item metadata; collection does not assign a security verdict.
+META_JSON=$(cat <<'JSON'
 {
   "분류": "이미지",
   "코드": "3.2",
@@ -18,30 +21,6 @@
   "현황": [],
   "진단_결과": ""
 }
-
-
-# Docker 이미지 취약점 검사
-echo "Docker 이미지 취약점 및 구성 결함을 검사합니다..."
-
-# 이미지 목록 및 검증
-docker images | while read image; do
-    echo "검사 중: $image"
-    docker history "$image" | grep 'FROM|RUN|ADD|COPY'
-done
-
-# 컨테이너 패키지 검증
-docker ps --quiet | while read container; do
-    echo "컨테이너 패키지 검사: $container"
-    docker exec "$container" rpm -qa
-done
-
-# 결과 JSON 출력
-echo "{
-  \"분류\": \"$분류\",
-  \"코드\": \"$코드\",
-  \"위험도\": \"$위험도\",
-  \"진단_항목\": \"$진단_항목\",
-  \"대응방안\": \"$대응방안\",
-  \"현황\": $현황,
-  \"진단_결과\": \"$진단_결과\"
-}"
+JSON
+)
+collect_evidence '3.2'
